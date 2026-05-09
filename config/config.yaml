@@ -8,9 +8,8 @@ project:
   description: "Latent space and structure-aware explorer for Orthohantavirus glycoproteins"
 
 ncbi:
-  # Set email and api_key in environment or .env file
-  # email: set via NCBI_EMAIL env var or here
-  # api_key: set via NCBI_API_KEY env var or here
+  email: "hantavec@example.com"  # Set NCBI_EMAIL env var to override
+  api_key: ""                    # Set NCBI_API_KEY env var to override
   batch_size: 200           # number of records per efetch batch
   sleep_between_batches: 0.4  # seconds (without API key: 0.4s, with key: 0.1s)
   max_retries: 3

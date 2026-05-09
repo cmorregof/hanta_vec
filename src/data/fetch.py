@@ -148,56 +148,70 @@ def fetch_batch(
 
 def extract_gn_from_record(record) -> Optional[str]:
     """
-    Extract Gn (glycoprotein N-terminal) from GenBank record.
+    Extract Gn (glycoprotein N-terminal, ~480 aa) from GenBank record (nucleotide).
 
-    Priority:
-    1. Explicitly annotated "Gn" CDS
-    2. Explicitly annotated "glycoprotein" CDS (assume first 480 aa)
-    3. Explicitly annotated "GPC" / "glycoprotein precursor" (truncate to 480 aa)
+    Priority (Tier 1 → Tier 2 → Tier 3):
+
+    Tier 1: Explicitly annotated Gn/G1 with translation
+      - "Gn", "gn", "G1", "g1"
+      - "glycoprotein Gn", "glycoprotein G1"
+      - "envelope glycoprotein Gn", "surface glycoprotein Gn"
+
+    Tier 2: GPC / glycoprotein precursor with translation → truncate to first 480 aa
+      - "GPC", "glycoprotein precursor", "M segment"
+      - Returns translation[0:480]
+
+    Tier 3: Generic "envelope glycoprotein" → truncate to 480 aa
 
     Returns:
-        Gn sequence (str) or None if not found
+        Gn sequence (str, ~350-600 aa) or None if not found
     """
-    # Try explicit Gn
-    for feature in record.features:
-        if feature.type == "CDS":
-            product = feature.qualifiers.get("product", [""])[0].lower()
-            if "gn" in product or "g1" in product:
-                try:
-                    seq_str = str(
-                        feature.extract(record.seq)
-                    )  # This is DNA; we need protein
-                    # If this is a protein feature, it's already translated
-                    if len(seq_str) > 1000:
-                        return None  # Too long for Gn, likely DNA
-                    return seq_str
-                except:
-                    pass
+    if not record.features:
+        return None
 
-    # Try explicit Gc
-    gn_seq = None
+    # Tier 1: Explicitly annotated Gn/G1
+    gn_qualifiers = [
+        "gn", "g1",
+        "glycoprotein gn", "glycoprotein g1",
+        "envelope glycoprotein gn",
+        "surface glycoprotein gn",
+    ]
+
+    for feature in record.features:
+        if feature.type == "CDS" and "translation" in feature.qualifiers:
+            product = feature.qualifiers.get("product", [""])[0].lower()
+
+            if any(qual in product for qual in gn_qualifiers):
+                seq = feature.qualifiers["translation"][0]
+                if 300 < len(seq) < 800:
+                    return seq
+
+    # Tier 2: GPC / glycoprotein precursor
     gpc_seq = None
-
     for feature in record.features:
-        if feature.type == "CDS":
+        if feature.type == "CDS" and "translation" in feature.qualifiers:
             product = feature.qualifiers.get("product", [""])[0].lower()
+            translation = feature.qualifiers["translation"][0]
 
-            # Try to get Gn from translation
-            if "translation" in feature.qualifiers:
-                translation = feature.qualifiers["translation"][0]
+            if any(term in product for term in ["gpc", "glycoprotein precursor"]):
+                # If right size for GPC (~1000-1300 aa), truncate to Gn
+                if 900 < len(translation) < 1400:
+                    return translation[:480]
+                gpc_seq = translation
 
-                if "gn" in product or "g1" in product:
-                    return translation
+            # Also check for generic "envelope glycoprotein"
+            elif "envelope glycoprotein" in product and not any(q in product for q in ["gc", "g2"]):
+                if 900 < len(translation) < 1400:
+                    return translation[:480]
 
-                # Collect GPC for fallback
-                if "gpc" in product or "glycoprotein precursor" in product:
-                    gpc_seq = translation
+    # Tier 3: Fallback to GPC if size is suitable
+    if gpc_seq:
+        if 900 < len(gpc_seq) < 1400:
+            return gpc_seq[:480]
+        elif len(gpc_seq) > 480:
+            return gpc_seq[:480]
 
-    # Fallback: truncate GPC to first 480 aa (Gn region)
-    if gpc_seq and len(gpc_seq) > 350:
-        return gpc_seq[:480]  # Truncate to Gn
-
-    return gn_seq
+    return None
 
 
 def fetch_gn_sequences(
@@ -207,6 +221,9 @@ def fetch_gn_sequences(
 ) -> Tuple[List, Dict]:
     """
     Fetch Gn sequences from NCBI for all configured taxa.
+
+    Searches nucleotide database for M-segment (genome segment M) records,
+    extracts the GPC (glycoprotein precursor) protein via translation.
 
     Args:
         config_path: Path to config.yaml
@@ -232,20 +249,23 @@ def fetch_gn_sequences(
 
         print(f"\n{species_name} (taxid={taxon_id}):")
 
-        # Query: taxon + Gn/GPC keywords
-        query = f"txid{taxon_id}[Organism:exp] AND (Gn[Title] OR GPC[Title] OR 'glycoprotein precursor'[Title])"
+        # Query: taxon + glycoprotein precursor in nucleotide database
+        # M-segment encodes the glycoprotein precursor (GPC, ~1140 aa)
+        # We extract Gn (first ~480 aa) from the translated sequence
+        query = f"txid{taxon_id}[Organism:exp] AND ('glycoprotein precursor' OR 'envelope glycoprotein' OR Gn)"
 
         try:
-            ids = search_ncbi(query, retmax=num_per_taxon)
+            ids = search_ncbi(query, db="nucleotide", retmax=num_per_taxon)
             print(f"  Found {len(ids)} records")
 
             if not ids:
                 continue
 
-            # Fetch in batches
+            # Fetch in batches (nucleotide database)
             batch_count = 0
             for records, failed in fetch_batch(
                 ids,
+                db="nucleotide",
                 batch_size=config["ncbi"]["batch_size"],
                 sleep_time=config["ncbi"]["sleep_between_batches"],
             ):
@@ -254,16 +274,20 @@ def fetch_gn_sequences(
 
                 for record in records:
                     gn_seq = extract_gn_from_record(record)
-                    if gn_seq:
+                    if gn_seq and 350 <= len(gn_seq) <= 600:
+                        # Store both seq and metadata for later processing
                         metadata[record.id] = {
-                            "organism": species_name,
-                            "taxon_id": taxon_id,
-                            "description": record.description,
-                            "seq_length": len(gn_seq),
+                            "seq": gn_seq,
+                            "metadata": {
+                                "organism": species_name,
+                                "taxon_id": taxon_id,
+                                "description": record.description,
+                                "seq_length": len(gn_seq),
+                            }
                         }
 
         except Exception as e:
             print(f"  Error: {e}")
 
-    print(f"\n✓ Total records fetched: {len(all_records)}")
-    return all_records, metadata
+    print(f"\n✓ Total Gn sequences extracted: {len(metadata)}")
+    return metadata

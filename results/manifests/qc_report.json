@@ -1,0 +1,16 @@
+{
+  "total_fetched": 20,
+  "passed_qc": 3,
+  "failed_qc": 0,
+  "exact_duplicates": 2,
+  "near_duplicates": 15,
+  "failure_reasons": {},
+  "species_distribution": {
+    "Seoul_virus": 2,
+    "Prospect_Hill_virus": 1
+  },
+  "old_world_count": 0,
+  "new_world_count": 0,
+  "old_world_fraction": 0,
+  "new_world_fraction": 0
+}

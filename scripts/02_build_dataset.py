@@ -33,8 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from data.fetch import (
     load_config,
     setup_ncbi,
-    search_ncbi,
-    fetch_batch,
+    fetch_gn_sequences,
     extract_gn_from_record,
 )
 from data.metadata import (
@@ -68,56 +67,16 @@ def fetch_and_extract_gn(
     config: Dict,
     logger: logging.Logger,
     num_per_taxon: int = 80,
-) -> tuple:
+) -> Dict:
     """
-    Fetch and extract Gn sequences for all taxa.
+    Fetch and extract Gn sequences for all taxa using fetch_gn_sequences.
 
     Returns:
-        (records_with_seqs, total_fetched)
+        records_with_seqs: {accession: {seq, metadata}}
     """
-    setup_ncbi(config["ncbi"].get("email"), config["ncbi"].get("api_key"))
-
-    records_with_seqs = {}
-    total_fetched = 0
-
-    for species_name, taxon_id in config["taxa"].items():
-        if species_name == "genus_level":
-            continue
-
-        logger.info(f"{species_name} (taxid={taxon_id}):")
-
-        query = f"txid{taxon_id}[Organism:exp] AND (Gn[Title] OR GPC[Title] OR 'glycoprotein precursor'[Title])"
-
-        try:
-            ids = search_ncbi(query, retmax=num_per_taxon)
-            logger.info(f"  Found {len(ids)} records")
-
-            if not ids:
-                continue
-
-            # Fetch in batches
-            for records, failed in fetch_batch(
-                ids,
-                batch_size=config["ncbi"]["batch_size"],
-                sleep_time=config["ncbi"]["sleep_between_batches"],
-            ):
-                for record in records:
-                    gn_seq = extract_gn_from_record(record)
-                    if gn_seq and len(gn_seq) > 300:  # Rough min check
-                        metadata = extract_metadata_from_record(
-                            record, gn_seq, species_name
-                        )
-                        records_with_seqs[record.id] = {
-                            "seq": gn_seq,
-                            "metadata": metadata,
-                        }
-                        total_fetched += 1
-
-        except Exception as e:
-            logger.error(f"  Error: {e}")
-
-    logger.info(f"✓ Total Gn sequences extracted: {len(records_with_seqs)}")
-    return records_with_seqs, total_fetched
+    config_path = Path(__file__).parent.parent / "config" / "config.yaml"
+    records_with_seqs = fetch_gn_sequences(config_path, Path("/tmp"), num_per_taxon)
+    return records_with_seqs
 
 
 def main():
@@ -133,11 +92,13 @@ def main():
 
     # Step 1: Fetch and extract
     logger.info("\n1. FETCH & EXTRACT Gn sequences from NCBI")
-    records_with_seqs, total_fetched = fetch_and_extract_gn(config, logger, num_per_taxon=80)
+    records_with_seqs = fetch_and_extract_gn(config, logger, num_per_taxon=80)
 
     if not records_with_seqs:
         logger.error("No sequences extracted. Aborting.")
         return 1
+
+    total_fetched = len(records_with_seqs)
 
     # Step 2: Apply QC
     logger.info("\n2. APPLY QC FILTERS")
@@ -152,8 +113,9 @@ def main():
     logger.info(f"  Exact duplicates removed: {len(exact_dups)}")
 
     # Step 4: Remove near-duplicates
-    logger.info("\n4. REMOVE NEAR-DUPLICATES (≥99% identity)")
-    final_seqs, near_dups = remove_near_duplicates(unique_seqs, identity_threshold=0.99)
+    # Use 95% threshold instead of 99% to keep more diversity
+    logger.info("\n4. REMOVE NEAR-DUPLICATES (≥95% identity)")
+    final_seqs, near_dups = remove_near_duplicates(unique_seqs, identity_threshold=0.95)
     logger.info(f"  Final: {len(final_seqs)}")
     logger.info(f"  Near-duplicates removed: {len(near_dups)}")
 
