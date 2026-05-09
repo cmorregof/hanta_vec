@@ -283,6 +283,8 @@ Implication:           ESM-2 operates in compressed regime for within-genus dist
 
 ### F3/F4: UMAP Clustering
 
+![UMAP by species](results/figures/small/F3_umap_species.png)
+
 ```
 Species clusters:      Well-separated (Puumala, Hantaan, Seoul form distinct regions)
 Old/New World:         Partial separation (within-genus > geographic distance)
