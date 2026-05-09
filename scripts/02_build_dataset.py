@@ -33,8 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from data.fetch import (
     load_config,
     setup_ncbi,
-    fetch_gn_sequences,
-    extract_gn_from_record,
+    fetch_all_sources,
 )
 from data.metadata import (
     extract_metadata_from_record,
@@ -66,16 +65,16 @@ def setup_logging(log_dir: Path) -> logging.Logger:
 def fetch_and_extract_gn(
     config: Dict,
     logger: logging.Logger,
-    num_per_taxon: int = 80,
 ) -> Dict:
     """
-    Fetch and extract Gn sequences for all taxa using fetch_gn_sequences.
+    Fetch from three sources: protein DB, nucleotide M-segment, and RefSeq.
 
     Returns:
-        records_with_seqs: {accession: {seq, metadata}}
+        records_with_seqs: {accession: {seq, extraction_method, source, organism}}
     """
     config_path = Path(__file__).parent.parent / "config" / "config.yaml"
-    records_with_seqs = fetch_gn_sequences(config_path, Path("/tmp"), num_per_taxon)
+    raw_dir = Path(__file__).parent.parent / "data" / "raw" / "proteins"
+    records_with_seqs = fetch_all_sources(config_path, raw_dir)
     return records_with_seqs
 
 
@@ -90,9 +89,41 @@ def main():
 
     config = load_config(config_path)
 
-    # Step 1: Fetch and extract
-    logger.info("\n1. FETCH & EXTRACT Gn sequences from NCBI")
-    records_with_seqs = fetch_and_extract_gn(config, logger, num_per_taxon=80)
+    # Step 1: Fetch and extract from three sources
+    logger.info("\n1. FETCH & EXTRACT Gn sequences from three NCBI sources")
+    records_with_seqs = fetch_and_extract_gn(config, logger)
+
+    # Convert from three-source format to QC format
+    # Extract species name from organism description
+    def extract_species_name(desc: str) -> str:
+        """Extract species name from GenBank description."""
+        import re
+        # Look for Orthohantavirus patterns
+        patterns = [
+            r"Orthohantavirus\s+(\w+)",
+            r"(\w+)\s+virus",
+            r"\[([^\]]+)\]",  # Content in brackets
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, desc, re.IGNORECASE)
+            if match:
+                species = match.group(1).replace(" ", "_")
+                return species
+        return "unknown"
+
+    converted_records = {}
+    for accession, data in records_with_seqs.items():
+        species = extract_species_name(data["organism"])
+        converted_records[accession] = {
+            "seq": data["seq"],
+            "metadata": {
+                "organism": species,
+                "extraction_method": data["extraction_method"],
+                "seq_length": len(data["seq"]),
+            },
+            "extraction_method": data["extraction_method"],
+        }
+    records_with_seqs = converted_records
 
     if not records_with_seqs:
         logger.error("No sequences extracted. Aborting.")
@@ -112,10 +143,10 @@ def main():
     logger.info(f"  Unique: {len(unique_seqs)}")
     logger.info(f"  Exact duplicates removed: {len(exact_dups)}")
 
-    # Step 4: Remove near-duplicates
-    # Use 95% threshold instead of 99% to keep more diversity
-    logger.info("\n4. REMOVE NEAR-DUPLICATES (≥95% identity)")
-    final_seqs, near_dups = remove_near_duplicates(unique_seqs, identity_threshold=0.95)
+    # Step 4: Remove near-duplicates at 99% identity
+    near_dup_threshold = config["qc"].get("near_duplicate_threshold", 0.99)
+    logger.info(f"\n4. REMOVE NEAR-DUPLICATES (≥{near_dup_threshold:.1%} identity)")
+    final_seqs, near_dups = remove_near_duplicates(unique_seqs, identity_threshold=near_dup_threshold)
     logger.info(f"  Final: {len(final_seqs)}")
     logger.info(f"  Near-duplicates removed: {len(near_dups)}")
 
@@ -151,9 +182,6 @@ def main():
         final_seqs,
         metadata_df,
         processed_dir,
-        level_0_count=(10, 20),
-        level_1_count=(100, 300),
-        max_per_species=60,
     )
 
     logger.info("\n" + "="*80)
