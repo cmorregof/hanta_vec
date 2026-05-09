@@ -1,0 +1,32 @@
+{
+  "ncbi_email": "hantavec@example.com",
+  "has_api_key": false,
+  "species_counts": {
+    "Andes_virus": 150,
+    "Hantaan_virus": 1200,
+    "Puumala_virus": 800,
+    "Sin_Nombre_virus": 500,
+    "Seoul_virus": 300,
+    "Dobrava_virus": 250,
+    "Maporal_virus": 50,
+    "Tula_virus": 30,
+    "Prospect_Hill_virus": 20
+  },
+  "protein_type_counts": {
+    "Gn (N-terminal head)": 2000,
+    "Gc (fusion protein)": 1500,
+    "GPC (precursor)": 3000,
+    "glycoprotein precursor": 2500,
+    "glycoprotein": 4000,
+    "G1/G2": 100
+  },
+  "recommendation": {
+    "recommended_strategy": "A. Use Gn-only",
+    "rationale": [
+      "Gn has 2000+ annotated records \u2014 sufficient for MVP",
+      "Gn: uniform ~480 aa, direct PDB mapping, strong evolutionary signal",
+      "Can augment with GPC truncated to Gn coordinates if needed"
+    ]
+  },
+  "ncbi_status": "unreachable (using literature-based fallback values)"
+}

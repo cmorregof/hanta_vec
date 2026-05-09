@@ -1,0 +1,43 @@
+# Data
+data/raw/
+data/processed/
+data/structures/
+
+# Results (except manifests and small figures)
+results/embeddings/
+results/baselines/
+results/figures/large/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+venv/
+env/
+.venv/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+config/secrets.yaml
+
+# Temporary
+*.tmp
+*.log.gz

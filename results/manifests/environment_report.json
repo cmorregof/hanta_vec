@@ -1,0 +1,56 @@
+{
+  "timestamp": null,
+  "python_info": {
+    "python_version": "3.14.4",
+    "python_implementation": "CPython",
+    "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64"
+  },
+  "packages": {
+    "biopython": "1.87",
+    "pandas": "3.0.2",
+    "numpy": "2.4.4",
+    "scipy": "1.17.1",
+    "scikit-learn": "NOT INSTALLED (No package metadata was found for scikit-learn)",
+    "umap-learn": "NOT INSTALLED (No package metadata was found for umap-learn)",
+    "torch": "NOT INSTALLED (No package metadata was found for torch)",
+    "transformers": "NOT INSTALLED (No package metadata was found for transformers)",
+    "py3Dmol": "NOT INSTALLED (No package metadata was found for py3Dmol)",
+    "matplotlib": "3.10.9",
+    "plotly": "NOT INSTALLED (No package metadata was found for plotly)",
+    "seaborn": "NOT INSTALLED (No package metadata was found for seaborn)",
+    "tqdm": "4.67.3",
+    "pyyaml": "6.0.3",
+    "h5py": "NOT INSTALLED (No package metadata was found for h5py)"
+  },
+  "cuda": {
+    "cuda_error": "No module named 'torch'",
+    "cuda_available": false
+  },
+  "system_tools": {
+    "mafft": "not_found",
+    "cd-hit": "not_found",
+    "mmseqs2": "not_found"
+  },
+  "config": {
+    "config_found": true,
+    "valid_yaml": true,
+    "required_sections_present": true,
+    "missing_sections": [],
+    "config_path": "/Users/cmorregof/Virus/HantaVec/config/config.yaml"
+  },
+  "summary": {
+    "missing_packages": [
+      "scikit-learn",
+      "umap-learn",
+      "torch",
+      "transformers",
+      "py3Dmol",
+      "plotly",
+      "seaborn",
+      "h5py"
+    ],
+    "cuda_available": false,
+    "required_system_tools_available": false
+  }
+}

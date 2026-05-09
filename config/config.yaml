@@ -1,0 +1,81 @@
+# HantaVec Configuration
+# All parameters and paths are defined here. No hardcoding in code.
+# Do NOT commit secrets (NCBI API keys) — use environment variables or .env
+
+project:
+  name: "HantaVec"
+  version: "0.1.0"
+  description: "Latent space and structure-aware explorer for Orthohantavirus glycoproteins"
+
+ncbi:
+  # Set email and api_key in environment or .env file
+  # email: set via NCBI_EMAIL env var or here
+  # api_key: set via NCBI_API_KEY env var or here
+  batch_size: 200           # number of records per efetch batch
+  sleep_between_batches: 0.4  # seconds (without API key: 0.4s, with key: 0.1s)
+  max_retries: 3
+  retry_backoff: [1, 4, 16]  # seconds for exponential backoff
+
+taxa:
+  # NCBI taxonomy IDs for Orthohantavirus species
+  Andes_virus: 64006
+  Hantaan_virus: 11603
+  Puumala_virus: 64005
+  Sin_Nombre_virus: 64008
+  Seoul_virus: 11604
+  Dobrava_virus: 64007
+  Maporal_virus: 268287
+  Tula_virus: 50393
+  Prospect_Hill_virus: 11608
+  genus_level: 1980459  # catch-all for genus Orthohantavirus
+
+qc:
+  # Quality control thresholds
+  protein_length_min: 250
+  protein_length_max: 1300
+  gn_length_min: 350
+  gn_length_max: 600
+  gc_length_min: 500
+  gc_length_max: 750
+  max_ambiguous_fraction: 0.05  # max X, B, Z, J per sequence
+
+embeddings:
+  model: "facebook/esm2_t12_35M_UR50D"  # ESM-2 35M params
+  device: "auto"  # "cpu", "cuda", or "auto"
+  batch_size_cpu: 8
+  batch_size_gpu: 32
+  max_length: 1022  # ESM-2 limit
+  pooling: "mean"   # mean over residue tokens (exclude special tokens)
+  cache_dir: "results/embeddings/cache"
+
+reduction:
+  pca_components: 50
+  umap_n_neighbors: 15
+  umap_min_dist: 0.1
+  umap_n_components: 2
+  random_state: 42
+
+analysis:
+  max_per_species_for_plots: 50  # stratified sampling
+  similarity_heatmap_max_n: 100
+
+pdb:
+  structures:
+    - "6Y6P"  # Hantaan: Gn head + Gc heterodimer
+    - "5LK2"  # Hantaan: Gc pre-fusion (2.5 Å)
+    - "5LJZ"  # Hantaan: Gc post-fusion
+    - "6YRQ"  # Andes: Gn tetramerization domain
+    - "6Y6Q"  # Andes: Gc post-fusion
+  download_dir: "data/structures/"
+
+paths:
+  raw_proteins: "data/raw/proteins/"
+  raw_nucleotides: "data/raw/nucleotides/"
+  processed: "data/processed/"
+  structures: "data/structures/"
+  embeddings: "results/embeddings/"
+  baselines: "results/baselines/"
+  figures: "results/figures/"
+  manifests: "results/manifests/"
+  logs: "logs/"
+  reports: "reports/"
