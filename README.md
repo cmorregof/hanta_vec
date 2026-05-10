@@ -261,24 +261,27 @@ Geographic:            Old World 277 (69.6%), New World 46 (11.6%), Unknown 75
 
 ## Results
 
-### F6: ESM-2 / Sequence Identity Correlation
+### F1: Dataset Overview
+
+![Dataset overview](results/figures/small/F1_dataset_overview.png)
 
 ```
-Method:      Bio.Align.PairwiseAligner (global, match=1, mismatch=0, gap=0)
-Pairs:       100 random (seed=42)
-Spearman ρ:  0.6893
-p-value:     < 10⁻¹⁴
-Interpretation: Strong monotonic relationship; ESM-2 preserves evolutionary distance
+Total sequences:       398
+Length distribution:   200–677 aa (mean: 437 ± 69)
+Species breakdown:     Puumala 84, Hantaan 57, Seoul 46, Dobrava 34, others 177
+Geographic origin:     Old World 277 (69.6%), New World 46 (11.6%), Unknown 75
+Extraction methods:    Protein DB direct, Nucleotide M-segment, RefSeq
 ```
 
-### F6b: Compression Analysis
+### F2: PCA by Species
+
+![PCA scatter by species](results/figures/small/F2_pca_species.png)
 
 ```
-Sequence identity:     0.194–0.977 (range = 78.3)
-ESM-2 cosine sim:      0.960–1.000 (range = 4.0)
-Compression ratio:     19.6×
-Observation:           All pairwise similarities > 0.96 despite 78 point spread in identity
-Implication:           ESM-2 operates in compressed regime for within-genus distances
+Variance explained:    PC1+PC2 = 42.4% (480 → 50 → 2 dims)
+Species separation:    Clear separation along PC1 (Puumala vs others)
+Outliers:              Seoul subspecies variants at extremes
+Scree plot:            Inset shows cumulative variance (50 PCs explain 73%)
 ```
 
 ### F3/F4: UMAP Clustering
@@ -292,7 +295,44 @@ Outliers (95th %ile):  20 sequences (mostly Seoul subspecies variants)
 Density:               Puumala > Seoul > Dobrava (spread inversely correlated with N)
 ```
 
-### F7: Conservation
+### F5: Cosine Similarity Heatmap
+
+![Similarity heatmap](results/figures/small/F5_similarity_heatmap.png)
+
+```
+Subset:                80 sequences (stratified by species)
+Range:                 0.960–1.000 (compression effect visible)
+Block structure:       Strong within-species blocks (dark red)
+Interpretation:        Species-level clustering despite narrow similarity range
+```
+
+### F6: ESM-2 / Sequence Identity Correlation
+
+![ESM-2 vs sequence identity](results/figures/small/F6_esm2_vs_identity.png)
+
+```
+Method:      Bio.Align.PairwiseAligner (global, match=1, mismatch=0, gap=0)
+Pairs:       100 random (seed=42)
+Spearman ρ:  0.6893
+p-value:     < 10⁻¹⁴
+Interpretation: Strong monotonic relationship; ESM-2 preserves evolutionary distance
+```
+
+### F6b: Compression Analysis
+
+![Compression ratio analysis](results/figures/small/F6b_compression_analysis.png)
+
+```
+Sequence identity:     0.194–0.977 (range = 78.3)
+ESM-2 cosine sim:      0.960–1.000 (range = 4.0)
+Compression ratio:     19.6×
+Observation:           All pairwise similarities > 0.96 despite 78 point spread in identity
+Implication:           ESM-2 operates in compressed regime for within-genus distances
+```
+
+### F7: Conservation Scores
+
+![Conservation profile](results/figures/small/F7_conservation_scores.png)
 
 ```
 MSA:                   79 sequences, top 5 species
