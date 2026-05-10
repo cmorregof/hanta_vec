@@ -1,0 +1,15 @@
+{
+  "total_sequences": 398,
+  "embeddings_computed": 398,
+  "embeddings_failed": 0,
+  "embedding_shape": [
+    398,
+    480
+  ],
+  "model": "facebook/esm2_t12_35M_UR50D",
+  "has_nan": false,
+  "norm_mean": 6.7625555992126465,
+  "norm_std": 0.08259507268667221,
+  "norm_min": 6.352273464202881,
+  "norm_max": 6.9846110343933105
+}
