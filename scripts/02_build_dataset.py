@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
-Phase 1: Build curated dataset from NCBI sequences.
+Phase 1: Build three-segment curated dataset from NCBI sequences.
+
+Three-segment strategy:
+- S-segment: Nucleocapsid protein (N, ~430 aa)
+- M-segment: Glycoprotein precursor (GPC, ~900-1150 aa)
+- L-segment: RNA polymerase (RdRp, ~2100-2200 aa)
 
 Steps:
-1. Fetch Gn sequences from NCBI for all taxa
-2. Extract Gn protein and metadata
-3. Apply QC filters (length, ambiguous AA, stops, duplicates)
-4. Create Level 0 (10-20) and Level 1 (100-300) splits
-5. Generate reports
+1. Fetch sequences from all three segments for all taxa
+2. Apply segment-specific QC filters
+3. Remove duplicates within each segment (not across segments)
+4. Create Level 1 dataset with cross-segment matching
+5. Generate comprehensive reports
 
 Outputs:
-- data/processed/gn_sequences_level0.fasta
-- data/processed/gn_sequences_level1.fasta
-- data/processed/metadata_level0.tsv
-- data/processed/metadata_level1.tsv
-- results/manifests/dataset_manifest_level{0,1}.tsv
+- data/processed/{S,M,L}_sequences_level1.fasta
+- data/processed/metadata_level1.tsv (combined all segments)
+- results/manifests/dataset_manifest_level1.tsv
 - results/manifests/qc_report.json
 """
 
@@ -22,9 +25,10 @@ import json
 import sys
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
 import yaml
+import pandas as pd
 from Bio import Entrez, SeqIO
 
 # Add src to path
@@ -32,20 +36,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from data.fetch import (
     load_config,
-    setup_ncbi,
-    fetch_all_sources,
+    fetch_three_segment_sequences,
 )
-from data.metadata import (
-    extract_metadata_from_record,
-    build_metadata_df,
-)
-from data.qc import (
-    apply_qc_filters,
-    remove_exact_duplicates,
-    remove_near_duplicates,
-    generate_qc_report,
-)
-from data.splits import build_level_0_and_1
 
 
 def setup_logging(log_dir: Path) -> logging.Logger:
@@ -62,20 +54,79 @@ def setup_logging(log_dir: Path) -> logging.Logger:
     return logging.getLogger(__name__)
 
 
-def fetch_and_extract_gn(
-    config: Dict,
-    logger: logging.Logger,
-) -> Dict:
-    """
-    Fetch from three sources: protein DB, nucleotide M-segment, and RefSeq.
+def check_sequence_quality(sequence: str, segment: str) -> bool:
+    """Apply segment-specific QC filters."""
+    # Check for ambiguous amino acids (15% threshold)
+    ambiguous_count = sum(sequence.count(aa) for aa in ['X', 'B', 'Z', 'J'])
+    if (ambiguous_count / len(sequence)) > 0.15:
+        return False
 
-    Returns:
-        records_with_seqs: {accession: {seq, extraction_method, source, organism}}
-    """
-    config_path = Path(__file__).parent.parent / "config" / "config.yaml"
-    raw_dir = Path(__file__).parent.parent / "data" / "raw" / "proteins"
-    records_with_seqs = fetch_all_sources(config_path, raw_dir)
-    return records_with_seqs
+    # Check for stop codons
+    if '*' in sequence.replace('*', '', len(sequence) - 1):  # Allow terminal stop
+        return False
+
+    # Segment-specific length checks
+    length_ranges = {
+        'S': (380, 500),    # Nucleocapsid
+        'M': (400, 1300),   # Glycoprotein
+        'L': (1800, 2300),  # Polymerase
+    }
+
+    min_len, max_len = length_ranges[segment]
+    return min_len <= len(sequence) <= max_len
+
+
+def remove_near_duplicates_within_segment(segment_data: Dict, threshold: float = 0.99) -> Tuple[Dict, Dict]:
+    """Remove near-duplicates within a segment using sequence identity."""
+    import difflib
+
+    sequences = [(record_id, data['sequence']) for record_id, data in segment_data.items()]
+    to_remove = set()
+    removed_data = {}
+
+    for i, (id1, seq1) in enumerate(sequences):
+        if id1 in to_remove:
+            continue
+
+        for j, (id2, seq2) in enumerate(sequences[i+1:], i+1):
+            if id2 in to_remove:
+                continue
+
+            # Calculate sequence similarity
+            similarity = difflib.SequenceMatcher(None, seq1, seq2).ratio()
+
+            if similarity >= threshold:
+                # Keep the first one, remove the second
+                to_remove.add(id2)
+                removed_data[id2] = segment_data[id2]
+
+    # Return filtered data
+    kept_data = {k: v for k, v in segment_data.items() if k not in to_remove}
+    return kept_data, removed_data
+
+
+def find_cross_segment_matches(segment_data_dict: Dict) -> Dict:
+    """Find isolates that appear in multiple segments."""
+    # Build mapping of isolate/strain -> segments -> record_ids
+    isolate_map = {}
+
+    for segment, data in segment_data_dict.items():
+        for record_id, record_data in data.items():
+            isolate = record_data.get('isolate')
+            strain = record_data.get('strain')
+            species = record_data['species']
+
+            # Use isolate or strain as key
+            key = isolate or strain
+            if key:
+                key = f"{species}_{key}"
+                if key not in isolate_map:
+                    isolate_map[key] = {}
+                if segment not in isolate_map[key]:
+                    isolate_map[key][segment] = []
+                isolate_map[key][segment].append(record_id)
+
+    return isolate_map
 
 
 def main():
@@ -84,120 +135,177 @@ def main():
     logger = setup_logging(log_dir)
 
     logger.info("="*80)
-    logger.info("PHASE 1: BUILD DATASET")
+    logger.info("PHASE 1: BUILD THREE-SEGMENT DATASET")
     logger.info("="*80)
 
     config = load_config(config_path)
 
-    # Step 1: Fetch and extract from three sources
-    logger.info("\n1. FETCH & EXTRACT Gn sequences from three NCBI sources")
-    records_with_seqs = fetch_and_extract_gn(config, logger)
+    # Step 1: Fetch sequences from all three segments
+    logger.info("\n1. FETCH SEQUENCES FROM ALL THREE SEGMENTS")
+    output_dir = Path(__file__).parent.parent / "data" / "raw" / "proteins"
+    raw_data = fetch_three_segment_sequences(config_path, output_dir, use_broad_search=True)
 
-    # Convert from three-source format to QC format
-    # Extract species name from organism description
-    def extract_species_name(desc: str) -> str:
-        """Extract species name from GenBank description."""
-        import re
-        # Look for Orthohantavirus patterns
-        patterns = [
-            r"Orthohantavirus\s+(\w+)",
-            r"(\w+)\s+virus",
-            r"\[([^\]]+)\]",  # Content in brackets
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, desc, re.IGNORECASE)
-            if match:
-                species = match.group(1).replace(" ", "_")
-                return species
-        return "unknown"
+    total_fetched = sum(len(segment_data) for segment_data in raw_data.values())
+    logger.info(f"\nTotal fetched across all segments: {total_fetched}")
 
-    converted_records = {}
-    for accession, data in records_with_seqs.items():
-        species = extract_species_name(data["organism"])
-        converted_records[accession] = {
-            "seq": data["seq"],
-            "metadata": {
-                "organism": species,
-                "extraction_method": data["extraction_method"],
-                "seq_length": len(data["seq"]),
-            },
-            "extraction_method": data["extraction_method"],
-        }
-    records_with_seqs = converted_records
+    # Step 2: Apply segment-specific QC
+    logger.info("\n2. APPLY SEGMENT-SPECIFIC QC")
+    qc_passed = {}
+    qc_failed = {}
 
-    if not records_with_seqs:
-        logger.error("No sequences extracted. Aborting.")
-        return 1
+    for segment, segment_data in raw_data.items():
+        passed = {}
+        failed = {}
 
-    total_fetched = len(records_with_seqs)
+        for record_id, record_data in segment_data.items():
+            sequence = record_data['sequence']
 
-    # Step 2: Apply QC
-    logger.info("\n2. APPLY QC FILTERS")
-    passed_qc, failed_qc = apply_qc_filters(records_with_seqs, config["qc"])
-    logger.info(f"  Passed QC: {len(passed_qc)}")
-    logger.info(f"  Failed QC: {len(failed_qc)}")
+            if check_sequence_quality(sequence, segment):
+                passed[record_id] = record_data
+            else:
+                failed[record_id] = record_data
 
-    # Step 3: Remove exact duplicates
-    logger.info("\n3. REMOVE EXACT DUPLICATES")
-    unique_seqs, exact_dups = remove_exact_duplicates(passed_qc)
-    logger.info(f"  Unique: {len(unique_seqs)}")
-    logger.info(f"  Exact duplicates removed: {len(exact_dups)}")
+        qc_passed[segment] = passed
+        qc_failed[segment] = failed
 
-    # Step 4: Remove near-duplicates at 99% identity
-    near_dup_threshold = config["qc"].get("near_duplicate_threshold", 0.99)
-    logger.info(f"\n4. REMOVE NEAR-DUPLICATES (≥{near_dup_threshold:.1%} identity)")
-    final_seqs, near_dups = remove_near_duplicates(unique_seqs, identity_threshold=near_dup_threshold)
-    logger.info(f"  Final: {len(final_seqs)}")
-    logger.info(f"  Near-duplicates removed: {len(near_dups)}")
+        logger.info(f"  {segment}-segment: {len(passed)} passed, {len(failed)} failed QC")
 
-    # Step 5: Build metadata dataframe
-    logger.info("\n5. BUILD METADATA DATAFRAME")
-    metadata_df = build_metadata_df(final_seqs)
-    logger.info(f"  Metadata shape: {metadata_df.shape}")
+    # Step 3: Remove near-duplicates within each segment
+    logger.info("\n3. REMOVE NEAR-DUPLICATES (≥99% identity within segment)")
+    final_data = {}
+    removed_dups = {}
 
-    # Step 6: Generate QC report
+    for segment, segment_data in qc_passed.items():
+        kept, removed = remove_near_duplicates_within_segment(segment_data, threshold=0.99)
+        final_data[segment] = kept
+        removed_dups[segment] = removed
+
+        logger.info(f"  {segment}-segment: {len(kept)} kept, {len(removed)} duplicates removed")
+
+    # Step 4: Cross-segment analysis
+    logger.info("\n4. CROSS-SEGMENT MATCHING")
+    cross_matches = find_cross_segment_matches(final_data)
+
+    # Count isolates with all three segments
+    all_three_segments = 0
+    for isolate, segments in cross_matches.items():
+        if len(segments) == 3:
+            all_three_segments += 1
+
+    logger.info(f"  Matched isolates: {len(cross_matches)}")
+    logger.info(f"  Isolates with all three segments: {all_three_segments}")
+
+    # Step 5: Build combined metadata and save files
+    logger.info("\n5. SAVE PROCESSED DATA")
+    processed_dir = Path(__file__).parent.parent / "data" / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save FASTA files per segment
+    all_metadata = []
+    for segment, segment_data in final_data.items():
+        fasta_path = processed_dir / f"{segment}_sequences_level1.fasta"
+
+        with open(fasta_path, 'w') as f:
+            for record_id, record_data in segment_data.items():
+                # Write FASTA record
+                header = f">{record_id}_{segment} {record_data['species']} | {record_data['clade']} | {record_data['method']}"
+                f.write(f"{header}\n{record_data['sequence']}\n")
+
+                # Collect metadata
+                metadata_row = {
+                    'record_id': f"{record_id}_{segment}",
+                    'genbank_id': record_id,
+                    'segment': segment,
+                    'species': record_data['species'],
+                    'taxon_id': record_data['taxon_id'],
+                    'clade': record_data['clade'],
+                    'isolate': record_data.get('isolate', ''),
+                    'strain': record_data.get('strain', ''),
+                    'length': record_data['length'],
+                    'method': record_data['method'],
+                    'description': record_data['description'],
+                }
+                all_metadata.append(metadata_row)
+
+        logger.info(f"  Saved {fasta_path.name}: {len(segment_data)} sequences")
+
+    # Save combined metadata
+    import pandas as pd
+    metadata_df = pd.DataFrame(all_metadata)
+    metadata_path = processed_dir / "metadata_level1.tsv"
+    metadata_df.to_csv(metadata_path, sep='\t', index=False)
+    logger.info(f"  Saved {metadata_path.name}: {len(metadata_df)} records")
+
+    # Step 6: Generate comprehensive QC report
     logger.info("\n6. GENERATE QC REPORT")
-    qc_report = generate_qc_report(
-        total_fetched,
-        len(final_seqs),
-        failed_qc,
-        exact_dups,
-        near_dups,
-        metadata_df,
+
+    # Species × Segment cross-table
+    species_segment_table = metadata_df.pivot_table(
+        index='species', columns='segment', values='record_id', aggfunc='count', fill_value=0
     )
 
+    # Method breakdown per segment
+    method_breakdown = {}
+    for segment in ['S', 'M', 'L']:
+        segment_df = metadata_df[metadata_df['segment'] == segment]
+        method_breakdown[segment] = segment_df['method'].value_counts().to_dict()
+
+    # Cross-segment matches
+    cross_segment_stats = {
+        'total_isolates': len(cross_matches),
+        'with_all_three': all_three_segments,
+        'with_two_segments': sum(1 for segments in cross_matches.values() if len(segments) == 2),
+        'single_segment_only': sum(1 for segments in cross_matches.values() if len(segments) == 1),
+    }
+
+    qc_report = {
+        'total_fetched': total_fetched,
+        'total_after_qc': sum(len(segment_data) for segment_data in final_data.values()),
+        'per_segment_counts': {segment: len(data) for segment, data in final_data.items()},
+        'species_segment_table': species_segment_table.to_dict(),
+        'method_breakdown': method_breakdown,
+        'cross_segment_matches': cross_segment_stats,
+        'qc_passed_per_segment': {segment: len(data) for segment, data in qc_passed.items()},
+        'qc_failed_per_segment': {segment: len(data) for segment, data in qc_failed.items()},
+        'duplicates_removed_per_segment': {segment: len(data) for segment, data in removed_dups.items()},
+    }
+
+    # Save QC report
     manifests_dir = Path(__file__).parent.parent / "results" / "manifests"
     manifests_dir.mkdir(parents=True, exist_ok=True)
     with open(manifests_dir / "qc_report.json", "w") as f:
         json.dump(qc_report, f, indent=2)
 
-    logger.info(json.dumps(qc_report, indent=2))
-
-    # Step 7: Build Level 0 and Level 1
-    logger.info("\n7. BUILD LEVEL 0 & LEVEL 1 SPLITS")
-    processed_dir = Path(__file__).parent.parent / "data" / "processed"
-    processed_dir.mkdir(parents=True, exist_ok=True)
-
-    build_level_0_and_1(
-        final_seqs,
-        metadata_df,
-        processed_dir,
-    )
+    logger.info("\n" + "="*50)
+    logger.info("QC REPORT SUMMARY")
+    logger.info("="*50)
+    logger.info(f"Total sequences after QC: {qc_report['total_after_qc']}")
+    for segment, count in qc_report['per_segment_counts'].items():
+        logger.info(f"  {segment}-segment: {count} sequences")
+    logger.info(f"\nCross-segment matches:")
+    logger.info(f"  All three segments: {cross_segment_stats['with_all_three']} isolates")
+    logger.info(f"  Two segments: {cross_segment_stats['with_two_segments']} isolates")
 
     logger.info("\n" + "="*80)
     logger.info("✓ PHASE 1 COMPLETE")
     logger.info("="*80)
 
-    # Check if passed acceptance criteria
-    if qc_report["passed_qc"] < 100:
-        logger.warning("⚠ Level 1 has < 100 records. Recommend manual augmentation.")
+    # Success criteria for three segments
+    total_sequences = qc_report['total_after_qc']
+    if total_sequences < 1500:
+        logger.warning(f"⚠ Total sequences ({total_sequences}) < 1500 target")
         return 1
 
-    if qc_report["old_world_fraction"] > 0.8 or qc_report["new_world_fraction"] > 0.8:
-        logger.warning("⚠ Heavy bias toward Old/New World. Per-species cap may have failed.")
+    min_per_segment = min(qc_report['per_segment_counts'].values())
+    if min_per_segment < 500:
+        logger.warning(f"⚠ Minimum per segment ({min_per_segment}) < 500 target")
         return 1
 
-    logger.info("✓ Dataset ready for Phase 2 (embeddings)")
+    if cross_segment_stats['with_all_three'] < 200:
+        logger.warning(f"⚠ Cross-segment matches ({cross_segment_stats['with_all_three']}) < 200 target")
+        return 1
+
+    logger.info("✓ Three-segment dataset ready for Phase 2 (embeddings)")
     return 0
 
 

@@ -91,7 +91,7 @@ def make_f1_dataset_overview(metadata: pd.DataFrame, embeddings_dir: Path):
 
     # Panel A: Species barplot (horizontal)
     ax_a = fig.add_subplot(gs[0, 0])
-    species_counts = metadata["species_clean"].value_counts().sort_values()
+    species_counts = metadata["species"].value_counts().sort_values()
     colors_list = [
         SPECIES_COLORS.get(s, SPECIES_COLORS["other"]) for s in species_counts.index
     ]
@@ -103,8 +103,8 @@ def make_f1_dataset_overview(metadata: pd.DataFrame, embeddings_dir: Path):
 
     # Panel B: Sequence length histogram
     ax_b = fig.add_subplot(gs[0, 1])
-    ax_b.hist(metadata["seq_length"], bins=20, color="steelblue", edgecolor="black")
-    median_len = metadata["seq_length"].median()
+    ax_b.hist(metadata["length"], bins=20, color="steelblue", edgecolor="black")
+    median_len = metadata["length"].median()
     ax_b.axvline(median_len, color="red", linestyle="--", linewidth=2, label=f"Median: {median_len:.0f}")
     ax_b.set_xlabel("Sequence length (aa)")
     ax_b.set_ylabel("Count")
@@ -125,7 +125,7 @@ def make_f1_dataset_overview(metadata: pd.DataFrame, embeddings_dir: Path):
 
     # Panel D: Extraction methods
     ax_d = fig.add_subplot(gs[1, 1])
-    method_counts = metadata["extraction_method"].value_counts()
+    method_counts = metadata["method"].value_counts()
     ax_d.bar(range(len(method_counts)), method_counts.values, color="skyblue", edgecolor="black")
     ax_d.set_xticks(range(len(method_counts)))
     ax_d.set_xticklabels([m[:20] for m in method_counts.index], rotation=45, ha="right", fontsize=9)
@@ -151,8 +151,8 @@ def make_f2_pca_species(coords_2d: np.ndarray, coords_50d: np.ndarray,
     fig, ax = plt.subplots(figsize=(12, 9))
 
     # Main scatter: PC1 vs PC2
-    for species in metadata["species_clean"].unique():
-        mask = metadata["species_clean"] == species
+    for species in metadata["species"].unique():
+        mask = metadata["species"] == species
         color = SPECIES_COLORS.get(species, SPECIES_COLORS["other"])
         ax.scatter(
             coords_2d[mask, 0],
@@ -202,8 +202,8 @@ def make_f3_umap_species(coords_umap: np.ndarray, metadata: pd.DataFrame, embedd
         df_plot,
         x="umap_x",
         y="umap_y",
-        color="species_clean",
-        hover_data=["accession", "old_new_world", "seq_length", "extraction_method"],
+        color="species",
+        hover_data=["genbank_id", "old_new_world", "length", "method"],
         title="UMAP of ESM-2 Embeddings — Orthohantavirus Gn (N=398)",
         labels={"umap_x": "UMAP 1", "umap_y": "UMAP 2"},
         color_discrete_map=SPECIES_COLORS,
@@ -218,8 +218,8 @@ def make_f3_umap_species(coords_umap: np.ndarray, metadata: pd.DataFrame, embedd
 
     # Static PNG
     fig, ax = plt.subplots(figsize=(11, 9))
-    for species in metadata["species_clean"].unique():
-        mask = metadata["species_clean"] == species
+    for species in metadata["species"].unique():
+        mask = metadata["species"] == species
         color = SPECIES_COLORS.get(species, SPECIES_COLORS["other"])
         ax.scatter(
             coords_umap[mask, 0],
@@ -258,7 +258,7 @@ def make_f4_umap_oldnewworld(coords_umap: np.ndarray, metadata: pd.DataFrame, em
         x="umap_x",
         y="umap_y",
         color="old_new_world",
-        hover_data=["accession", "species_clean", "seq_length"],
+        hover_data=["genbank_id", "species", "length"],
         title="UMAP of ESM-2 Embeddings — Old World vs New World",
         labels={"umap_x": "UMAP 1", "umap_y": "UMAP 2"},
         color_discrete_map=OLDNEW_COLORS,
@@ -307,8 +307,8 @@ def make_f5_similarity_heatmap(embeddings: np.ndarray, metadata: pd.DataFrame, e
 
     # Select 80 stratified seqs (max 10 per species)
     selected_idx = []
-    for species in metadata["species_clean"].unique():
-        mask = metadata["species_clean"] == species
+    for species in metadata["species"].unique():
+        mask = metadata["species"] == species
         idx = np.where(mask)[0]
         selected_idx.extend(idx[: min(10, len(idx))])
 
@@ -327,7 +327,7 @@ def make_f5_similarity_heatmap(embeddings: np.ndarray, metadata: pd.DataFrame, e
     )
 
     # Species color bar on left
-    species_list = meta_subset["species_clean"].values
+    species_list = meta_subset["species"].values
     unique_species = []
     last_sp = None
     for sp in species_list:
@@ -405,8 +405,8 @@ def make_f6_esm2_vs_identity(sequences: Dict, embeddings: np.ndarray,
         similarities.append(sim)
 
         # Same species?
-        sp_i = metadata.iloc[i]["species_clean"]
-        sp_j = metadata.iloc[j]["species_clean"]
+        sp_i = metadata.iloc[i]["species"]
+        sp_j = metadata.iloc[j]["species"]
         same_species.append(sp_i == sp_j)
 
     identities = np.array(identities)
@@ -548,8 +548,8 @@ def main():
     logger.info("\n1. LOAD DATA")
     embeddings_path = Path(__file__).parent.parent / "results" / "embeddings" / "embeddings_level1.npy"
     accessions_path = Path(__file__).parent.parent / "results" / "embeddings" / "accessions_level1.txt"
-    metadata_path = Path(__file__).parent.parent / "data" / "processed" / "metadata_level1.tsv"
-    fasta_path = Path(__file__).parent.parent / "data" / "processed" / "gn_sequences_level1.fasta"
+    metadata_path = Path(__file__).parent.parent / "data" / "processed" / "metadata_level1_with_embeddings.tsv"
+    fasta_path = Path(__file__).parent.parent / "data" / "processed" / "sequences_level1_for_visualization.fasta"
 
     embeddings = np.load(embeddings_path)
     with open(accessions_path) as f:
@@ -565,14 +565,17 @@ def main():
     sequences = {rec.id: str(rec.seq) for rec in SeqIO.parse(fasta_path, "fasta")}
     logger.info(f"  Loaded {len(sequences)} sequences")
 
-    # 3. Infer old_new_world if needed
-    logger.info("\n3. INFER OLD/NEW WORLD")
-    if (
-        "old_new_world" not in metadata.columns
-        or metadata["old_new_world"].isna().all()
-        or (metadata["old_new_world"] == "unknown").all()
-    ):
-        metadata["old_new_world"] = metadata["species_clean"].apply(infer_oldnew_world)
+    # 3. Prepare Old/New World classification
+    logger.info("\n3. PREPARE OLD/NEW WORLD CLASSIFICATION")
+    if "clade" in metadata.columns:
+        # Use existing clade information
+        metadata["old_new_world"] = metadata["clade"].fillna("unknown")
+    elif "species" in metadata.columns:
+        # Infer from species if clade not available
+        metadata["old_new_world"] = metadata["species"].apply(infer_oldnew_world)
+    else:
+        logger.error("No species or clade information available!")
+        return 1
     logger.info(f"  Old World: {(metadata['old_new_world'] == 'Old World').sum()}")
     logger.info(f"  New World: {(metadata['old_new_world'] == 'New World').sum()}")
     logger.info(f"  Unknown: {(metadata['old_new_world'] == 'unknown').sum()}")
